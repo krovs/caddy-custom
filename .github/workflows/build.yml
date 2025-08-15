@@ -1,18 +1,31 @@
-name: Build and Push Caddy Custom
+name: Build Custom Caddy on New Release
 
 on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch: # allow manual trigger
 
 jobs:
-  build:
+  check-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
+      - name: Get latest Caddy version
+        id: caddy_version
+        run: |
+          latest=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
+          echo "version=${latest}" >> $GITHUB_OUTPUT
+
+      - name: Check if image already exists
+        run: |
+          if docker manifest inspect ghcr.io/${{ github.repository_owner }}/caddy-custom:${{ steps.caddy_version.outputs.version }} > /dev/null 2>&1; then
+            echo "Image already exists for version ${{ steps.caddy_version.outputs.version }}. Skipping build."
+            exit 0
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -34,5 +47,11 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/caddy-custom:latest
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/caddy-custom:latest
+            ghcr.io/${{ github.repository_owner }}/caddy-custom:${{ steps.caddy_version.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            CADDY_VERSION=${{ steps.caddy_version.outputs.version }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/caddy-custom:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/caddy-custom:buildcache,mode=max
